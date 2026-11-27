@@ -1,0 +1,1632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Apex Velocity 3D — High-Speed Arcade Racer</title>
+    <!-- Tailwind CSS for crisp responsive HUD layout -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.js r128 via CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Google Fonts: Orbitron for Racing Telemetry & Inter for UI -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: manipulation;
+        }
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #060814;
+            font-family: 'Inter', sans-serif;
+            color: #f8fafc;
+        }
+        .font-racing {
+            font-family: 'Orbitron', sans-serif;
+        }
+        #game-canvas {
+            position: fixed;
+            inset: 0;
+            width: 100vw;
+            height: 100vh;
+            display: block;
+            z-index: 1;
+        }
+        /* Glassmorphism HUD panels */
+        .hud-panel {
+            background: rgba(10, 15, 30, 0.72);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(56, 189, 248, 0.25);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        }
+        /* Nitro active screen vignette */
+        #nitro-vignette {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 5;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            background: radial-gradient(circle at center, transparent 55%, rgba(0, 229, 255, 0.28) 100%);
+        }
+        /* Damage flash vignette */
+        #damage-vignette {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 6;
+            opacity: 0;
+            transition: opacity 0.15s ease-out;
+            background: radial-gradient(circle at center, transparent 45%, rgba(239, 68, 68, 0.65) 100%);
+        }
+        /* Tactile Arcade Buttons */
+        .arcade-btn {
+            transition: transform 0.08s ease, box-shadow 0.12s ease, background-color 0.12s ease;
+        }
+        .arcade-btn:active, .arcade-btn.pressed {
+            transform: scale(0.93);
+        }
+        /* Animated Nitro Bar Shimmer */
+        @keyframes pulseGlow {
+            0%, 100% { box-shadow: 0 0 12px rgba(6, 182, 212, 0.6); }
+            50% { box-shadow: 0 0 24px rgba(6, 182, 212, 1); }
+        }
+        .nitro-ready {
+            animation: pulseGlow 1.5s infinite;
+        }
+        /* Near-Miss & Combo Floating Toast */
+        @keyframes popFloat {
+            0% { opacity: 0; transform: translateY(10px) scale(0.88); }
+            18% { opacity: 1; transform: translateY(0px) scale(1.04); }
+            82% { opacity: 1; transform: translateY(-10px) scale(1); }
+            100% { opacity: 0; transform: translateY(-20px) scale(0.95); }
+        }
+        .near-miss-pop {
+            animation: popFloat 1.15s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 3D WebGL Viewport -->
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Screen Edge Visual Effects -->
+    <div id="nitro-vignette"></div>
+    <div id="damage-vignette"></div>
+
+    <!-- Near-Miss & Combo Callout Banner -->
+    <div id="callout-container" class="fixed top-20 left-1/2 -translate-x-1/2 z-30 pointer-events-none flex flex-col items-center gap-1.5"></div>
+
+    <!-- TOP HUD BAR: Score, Distance, Combo, Integrity, Pause, Camera & Sound Controls -->
+    <header id="top-hud" class="fixed top-0 left-0 right-0 z-20 p-3 sm:p-4 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
+        <!-- Left: Score, Combo, Distance & Best -->
+        <div class="hud-panel rounded-2xl px-3.5 py-2 flex items-center gap-3 sm:gap-5 pointer-events-auto">
+            <div>
+                <div class="text-[10px] uppercase tracking-widest text-sky-400 font-semibold">Score</div>
+                <div class="flex items-baseline gap-1.5">
+                    <span id="hud-score" class="font-racing text-lg sm:text-2xl font-bold text-white leading-tight">0</span>
+                    <span id="hud-combo" class="font-racing text-xs font-black text-amber-400 hidden">x1</span>
+                </div>
+            </div>
+            <div class="h-7 w-px bg-slate-700"></div>
+            <div>
+                <div class="text-[10px] uppercase tracking-widest text-emerald-400 font-semibold">Distance</div>
+                <div class="font-racing text-base sm:text-xl font-bold text-white leading-tight">
+                    <span id="hud-distance">0.00</span> <span class="text-xs text-slate-400">KM</span>
+                </div>
+            </div>
+            <div class="hidden md:block h-7 w-px bg-slate-700"></div>
+            <div class="hidden md:block">
+                <div class="text-[10px] uppercase tracking-widest text-amber-400 font-semibold">Best</div>
+                <div id="hud-highscore" class="font-racing text-base sm:text-xl font-bold text-amber-300 leading-tight">0</div>
+            </div>
+        </div>
+
+        <!-- Center: Car Shield / Integrity Bar -->
+        <div class="hud-panel rounded-2xl px-3.5 py-2 flex items-center gap-3 pointer-events-auto">
+            <span class="text-[10px] uppercase tracking-widest text-rose-400 font-bold">Armor</span>
+            <div class="w-20 sm:w-36 h-3 bg-slate-900 rounded-full overflow-hidden border border-slate-700 p-0.5">
+                <div id="hud-health-bar" class="h-full w-full bg-gradient-to-r from-rose-500 via-amber-400 to-emerald-400 rounded-full transition-all duration-200"></div>
+            </div>
+            <span id="hud-health-text" class="font-racing text-xs font-bold text-white w-9 text-right">100%</span>
+        </div>
+
+        <!-- Right: Pause, Camera Switch & Audio Mute -->
+        <div class="flex items-center gap-2 pointer-events-auto">
+            <button id="btn-pause" title="Pause Race (P / Esc)" class="hud-panel arcade-btn rounded-xl px-3 py-2 text-xs sm:text-sm font-semibold text-amber-300 hover:text-white hover:border-amber-400 flex items-center gap-1.5">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <span class="hidden sm:inline">Pause</span>
+            </button>
+            <button id="btn-camera" title="Switch Camera (C)" class="hud-panel arcade-btn rounded-xl px-3 py-2 text-xs sm:text-sm font-semibold text-sky-300 hover:text-white hover:border-sky-400 flex items-center gap-1.5">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                </svg>
+                <span id="cam-label" class="hidden sm:inline">Chase Cam</span>
+            </button>
+            <button id="btn-sound" title="Toggle Engine Audio (M)" class="hud-panel arcade-btn rounded-xl p-2 text-sky-300 hover:text-white hover:border-sky-400">
+                <svg id="icon-sound-on" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/>
+                </svg>
+                <svg id="icon-sound-off" class="w-5 h-5 hidden text-rose-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2"/>
+                </svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- BOTTOM DASHBOARD & TOUCH CONTROLS -->
+    <footer id="bottom-hud" class="fixed bottom-0 left-0 right-0 z-20 p-3 sm:p-5 flex flex-col justify-end pointer-events-none gap-3">
+        
+        <!-- Telemetry Cluster Row: Steering Wheel + Brake Status + Nitro + Speedometer -->
+        <div class="w-full max-w-6xl mx-auto flex items-end justify-between gap-2 sm:gap-4">
+            
+            <!-- LEFT CLUSTER: Live Rotating Steering Wheel + Touch Left/Right Buttons -->
+            <div class="flex flex-col items-start gap-2 pointer-events-auto">
+                <!-- Live Visual Steering Wheel & Angle Telemetry -->
+                <div class="hud-panel rounded-2xl p-2.5 sm:p-3 flex items-center gap-3">
+                    <div class="relative w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center">
+                        <!-- SVG Racing Steering Wheel that rotates dynamically -->
+                        <svg id="steering-wheel-svg" class="w-full h-full text-slate-200 transition-transform duration-75" viewBox="0 0 100 100">
+                            <!-- Outer Rim -->
+                            <circle cx="50" cy="50" r="42" fill="none" stroke="#1e293b" stroke-width="11"/>
+                            <circle cx="50" cy="50" r="42" fill="none" stroke="#38bdf8" stroke-width="2.5" stroke-dasharray="220 45"/>
+                            <!-- Top Center Alignment Stripe (Red/Cyan) -->
+                            <rect x="46.5" y="3" width="7" height="11" rx="2" fill="#f43f5e"/>
+                            <!-- Spokes -->
+                            <path d="M12 50 L36 50 M64 50 L88 50 M50 64 L50 89" stroke="#475569" stroke-width="8" stroke-linecap="round"/>
+                            <!-- Center Hub -->
+                            <circle cx="50" cy="50" r="15" fill="#0f172a" stroke="#38bdf8" stroke-width="2.5"/>
+                            <circle cx="50" cy="50" r="5" fill="#38bdf8"/>
+                        </svg>
+                    </div>
+                    <div class="hidden sm:block">
+                        <div class="text-[10px] uppercase tracking-widest text-slate-400 font-semibold">Steering</div>
+                        <div id="hud-steer-angle" class="font-racing text-sm font-bold text-sky-300">0° CENTER</div>
+                        <div class="text-[10px] text-slate-500 mt-0.5">A / D or ◀ / ▶</div>
+                    </div>
+                </div>
+
+                <!-- Touch Steering Buttons (Always clickable on touch & desktop) -->
+                <div class="flex items-center gap-2">
+                    <button id="touch-left" class="hud-panel arcade-btn w-16 h-14 sm:w-20 sm:h-14 rounded-2xl flex items-center justify-center text-sky-300 hover:bg-sky-500/20 active:bg-sky-500/40 border-sky-500/40" aria-label="Turn Left">
+                        <svg class="w-8 h-8" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+                        </svg>
+                    </button>
+                    <button id="touch-right" class="hud-panel arcade-btn w-16 h-14 sm:w-20 sm:h-14 rounded-2xl flex items-center justify-center text-sky-300 hover:bg-sky-500/20 active:bg-sky-500/40 border-sky-500/40" aria-label="Turn Right">
+                        <svg class="w-8 h-8" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- CENTER CLUSTER: Brake On/Off Indicator + Nitro Boost Gauge -->
+            <div class="hud-panel rounded-2xl px-3 py-2.5 sm:px-5 sm:py-3 flex flex-col items-center gap-2 pointer-events-auto min-w-[145px] sm:min-w-[230px]">
+                <!-- Brake ON / OFF Pill Indicator -->
+                <div class="w-full flex items-center justify-between gap-2">
+                    <span class="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Brake Status</span>
+                    <div id="brake-indicator" class="px-2.5 py-0.5 rounded-full font-racing text-[11px] font-bold tracking-wider bg-slate-800 text-slate-400 border border-slate-700 transition-all duration-100">
+                        BRAKE: OFF
+                    </div>
+                </div>
+
+                <!-- Nitro Gauge Bar -->
+                <div class="w-full">
+                    <div class="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider mb-1">
+                        <span class="text-cyan-400 flex items-center gap-1">
+                            <span>⚡ NITRO</span>
+                        </span>
+                        <span id="nitro-pct" class="font-racing text-cyan-300">100%</span>
+                    </div>
+                    <div class="w-full h-3 bg-slate-900 rounded-full overflow-hidden border border-cyan-500/30 p-0.5">
+                        <div id="nitro-bar" class="h-full w-full bg-gradient-to-r from-blue-500 via-cyan-400 to-teal-300 rounded-full transition-all duration-75 nitro-ready"></div>
+                    </div>
+                </div>
+
+                <!-- Nitro Trigger Button -->
+                <button id="touch-nitro" class="arcade-btn w-full py-1.5 px-3 rounded-xl font-racing text-xs font-bold tracking-wider uppercase bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white shadow-lg shadow-cyan-500/25 border border-cyan-300/40">
+                    ⚡ NITRO BOOST (SHIFT)
+                </button>
+            </div>
+
+            <!-- RIGHT CLUSTER: Analog/Digital Speedometer + Gas & Brake Pedals -->
+            <div class="flex flex-col items-end gap-2 pointer-events-auto">
+                <!-- Analog Arc + Digital Speedometer & Gear -->
+                <div class="hud-panel rounded-2xl p-2.5 sm:p-3 flex items-center gap-3">
+                    <div class="relative w-20 h-20 sm:w-24 sm:h-24 flex items-center justify-center">
+                        <svg class="w-full h-full -rotate-[225deg]" viewBox="0 0 100 100">
+                            <!-- Background Track Arc (270 deg) -->
+                            <circle cx="50" cy="50" r="40" fill="none" stroke="#1e293b" stroke-width="9" stroke-dasharray="188.5 251.3" stroke-linecap="round"/>
+                            <!-- Active Speed Arc -->
+                            <circle id="speedo-arc" cx="50" cy="50" r="40" fill="none" stroke="url(#speedGrad)" stroke-width="9" stroke-dasharray="0 251.3" stroke-linecap="round"/>
+                            <defs>
+                                <linearGradient id="speedGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                                    <stop offset="0%" stop-color="#38bdf8"/>
+                                    <stop offset="60%" stop-color="#f59e0b"/>
+                                    <stop offset="100%" stop-color="#ef4444"/>
+                                </linearGradient>
+                            </defs>
+                        </svg>
+                        <!-- Center Digital Readout -->
+                        <div class="absolute inset-0 flex flex-col items-center justify-center">
+                            <span id="hud-speed" class="font-racing text-lg sm:text-2xl font-black text-white leading-none">0</span>
+                            <span class="text-[9px] font-bold tracking-widest text-slate-400 mt-0.5">KM/H</span>
+                        </div>
+                    </div>
+
+                    <!-- Gear & RPM Status -->
+                    <div class="flex flex-col items-center justify-between h-16 sm:h-20 pr-1">
+                        <div class="text-[9px] uppercase tracking-widest text-slate-400 font-bold">Gear</div>
+                        <div id="hud-gear" class="w-8 h-8 sm:w-9 sm:h-9 rounded-lg bg-slate-900 border border-sky-500/40 flex items-center justify-center font-racing text-base sm:text-lg font-black text-sky-400">
+                            N
+                        </div>
+                        <div id="hud-rpm-dots" class="flex gap-1">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                            <span class="w-1.5 h-1.5 rounded-full bg-slate-700"></span>
+                            <span class="w-1.5 h-1.5 rounded-full bg-slate-700"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Touch Pedals: BRAKE & GAS -->
+                <div class="flex items-center gap-2">
+                    <button id="touch-brake" class="hud-panel arcade-btn w-16 h-14 sm:w-20 sm:h-14 rounded-2xl flex flex-col items-center justify-center text-rose-400 hover:bg-rose-500/20 active:bg-rose-500/40 border-rose-500/40" aria-label="Brake">
+                        <span class="font-racing text-xs font-bold">BRAKE</span>
+                        <span class="text-[9px] text-slate-400">S / ▼</span>
+                    </button>
+                    <button id="touch-gas" class="hud-panel arcade-btn w-16 h-14 sm:w-20 sm:h-14 rounded-2xl flex flex-col items-center justify-center text-emerald-400 hover:bg-emerald-500/20 active:bg-emerald-500/40 border-emerald-500/40" aria-label="Accelerate">
+                        <span class="font-racing text-xs font-bold">GAS</span>
+                        <span class="text-[9px] text-slate-400">W / ▲</span>
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </footer>
+
+    <!-- START / GARAGE OVERLAY MODAL -->
+    <div id="start-modal" class="fixed inset-0 z-40 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-md">
+        <div class="hud-panel rounded-3xl max-w-lg w-full p-6 sm:p-8 text-center border-sky-400/40 shadow-2xl">
+            <div class="inline-block px-3 py-1 rounded-full bg-sky-500/15 border border-sky-400/30 text-sky-300 font-racing text-xs tracking-widest uppercase mb-3">
+                3D WebGL Arcade Racer
+            </div>
+            <h1 class="font-racing text-3xl sm:text-5xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-sky-400 via-cyan-200 to-rose-400 mb-2">
+                APEX VELOCITY 3D
+            </h1>
+            <p class="text-slate-300 text-sm sm:text-base mb-6">
+                Weave through neon highway traffic, collect Nitro cells, and push your hypercar past 320 KM/H.
+            </p>
+
+            <!-- Car Paint Color Selector -->
+            <div class="mb-6">
+                <div class="text-xs uppercase tracking-widest text-slate-400 font-semibold mb-2.5">Select Chassis Livery</div>
+                <div class="flex items-center justify-center gap-3" id="color-selector">
+                    <button data-color="#ef4444" class="color-swatch w-10 h-10 rounded-full bg-red-500 ring-2 ring-offset-2 ring-offset-slate-900 ring-white transition-transform scale-110" title="Crimson Red"></button>
+                    <button data-color="#0ea5e9" class="color-swatch w-10 h-10 rounded-full bg-sky-500 opacity-75 hover:opacity-100 transition-transform" title="Electric Blue"></button>
+                    <button data-color="#eab308" class="color-swatch w-10 h-10 rounded-full bg-yellow-500 opacity-75 hover:opacity-100 transition-transform" title="Solar Yellow"></button>
+                    <button data-color="#a855f7" class="color-swatch w-10 h-10 rounded-full bg-purple-500 opacity-75 hover:opacity-100 transition-transform" title="Ultraviolet"></button>
+                    <button data-color="#1e293b" class="color-swatch w-10 h-10 rounded-full bg-slate-800 border border-slate-500 opacity-75 hover:opacity-100 transition-transform" title="Stealth Carbon"></button>
+                </div>
+            </div>
+
+            <!-- Controls Quick Reference -->
+            <div class="grid grid-cols-2 gap-2 text-left bg-slate-900/80 rounded-2xl p-3.5 mb-6 border border-slate-800 text-xs">
+                <div class="flex items-center justify-between px-2 py-1">
+                    <span class="text-slate-400">Accelerate</span>
+                    <span class="font-racing text-emerald-400 font-bold">W / ▲</span>
+                </div>
+                <div class="flex items-center justify-between px-2 py-1">
+                    <span class="text-slate-400">Brake / Rev</span>
+                    <span class="font-racing text-rose-400 font-bold">S / ▼</span>
+                </div>
+                <div class="flex items-center justify-between px-2 py-1">
+                    <span class="text-slate-400">Steer L / R</span>
+                    <span class="font-racing text-sky-400 font-bold">A D / ◀ ▶</span>
+                </div>
+                <div class="flex items-center justify-between px-2 py-1">
+                    <span class="text-slate-400">Nitro Boost</span>
+                    <span class="font-racing text-cyan-300 font-bold">SHIFT / SPACE</span>
+                </div>
+            </div>
+
+            <button id="btn-start-game" class="arcade-btn w-full py-4 rounded-2xl font-racing text-lg font-black tracking-wider uppercase bg-gradient-to-r from-sky-500 via-cyan-400 to-blue-600 text-slate-950 shadow-xl shadow-cyan-500/30 hover:brightness-110">
+                IGNITE ENGINE
+            </button>
+        </div>
+    </div>
+
+    <!-- GAME OVER MODAL -->
+    <div id="gameover-modal" class="fixed inset-0 z-40 hidden items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+        <div class="hud-panel rounded-3xl max-w-md w-full p-6 sm:p-8 text-center border-rose-500/40 shadow-2xl">
+            <div class="inline-block px-3 py-1 rounded-full bg-rose-500/20 border border-rose-500/40 text-rose-400 font-racing text-xs tracking-widest uppercase mb-2">
+                Chassis Wrecked
+            </div>
+            <h2 class="font-racing text-3xl sm:text-4xl font-black text-white mb-5">RACE OVER</h2>
+
+            <div class="grid grid-cols-2 gap-3 mb-6">
+                <div class="bg-slate-900/90 rounded-2xl p-3.5 border border-slate-800">
+                    <div class="text-[10px] uppercase tracking-widest text-slate-400">Final Score</div>
+                    <div id="final-score" class="font-racing text-2xl font-bold text-sky-400 mt-1">0</div>
+                </div>
+                <div class="bg-slate-900/90 rounded-2xl p-3.5 border border-slate-800">
+                    <div class="text-[10px] uppercase tracking-widest text-slate-400">Distance</div>
+                    <div id="final-distance" class="font-racing text-2xl font-bold text-emerald-400 mt-1">0.00 KM</div>
+                </div>
+                <div class="bg-slate-900/90 rounded-2xl p-3.5 border border-slate-800">
+                    <div class="text-[10px] uppercase tracking-widest text-slate-400">Top Speed</div>
+                    <div id="final-topspeed" class="font-racing text-xl font-bold text-amber-400 mt-1">0 KM/H</div>
+                </div>
+                <div class="bg-slate-900/90 rounded-2xl p-3.5 border border-slate-800">
+                    <div class="text-[10px] uppercase tracking-widest text-slate-400">Best Score</div>
+                    <div id="final-highscore" class="font-racing text-xl font-bold text-purple-400 mt-1">0</div>
+                </div>
+            </div>
+
+            <button id="btn-restart-game" class="arcade-btn w-full py-4 rounded-2xl font-racing text-base sm:text-lg font-black tracking-wider uppercase bg-gradient-to-r from-rose-500 via-orange-500 to-amber-500 text-white shadow-xl shadow-rose-500/30 hover:brightness-110">
+                RACE AGAIN
+            </button>
+        </div>
+    </div>
+
+    <!-- PAUSE MODAL -->
+    <div id="pause-modal" class="fixed inset-0 z-40 hidden items-center justify-center p-4 bg-slate-950/75 backdrop-blur-md">
+        <div class="hud-panel rounded-3xl max-w-sm w-full p-6 sm:p-7 text-center border-amber-400/40 shadow-2xl">
+            <div class="inline-block px-3 py-1 rounded-full bg-amber-500/15 border border-amber-400/30 text-amber-300 font-racing text-xs tracking-widest uppercase mb-2">
+                Race Suspended
+            </div>
+            <h2 class="font-racing text-2xl sm:text-3xl font-black text-white mb-2">PAUSED</h2>
+            <p class="text-slate-400 text-xs sm:text-sm mb-6">
+                Telemetry frozen. Resume when you are ready to hit redline again.
+            </p>
+            <div class="flex flex-col gap-3">
+                <button id="btn-resume-game" class="arcade-btn w-full py-3.5 rounded-2xl font-racing text-sm sm:text-base font-black tracking-wider uppercase bg-gradient-to-r from-sky-500 to-cyan-400 text-slate-950 shadow-lg shadow-cyan-500/25">
+                    RESUME RACE
+                </button>
+                <button id="btn-pause-restart" class="arcade-btn w-full py-3 rounded-2xl font-racing text-xs sm:text-sm font-bold tracking-wider uppercase bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700">
+                    RESTART RUN
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * APEX VELOCITY 3D — Complete Single-File 3D Racing Engine
+         * Architecture:
+         * 1. SoundEngine: Procedural Web Audio API synthesizer for engine RPM hum, nitro turbine whoosh, tire screech, and collision impact.
+         * 2. SceneBuilder: Procedural textures, 3D sports car with steerable front wheels, glowing brake lights, exhaust nitro flames, neon highway, and synthwave city skyline.
+         * 3. GameController: Physics state, traffic spawning, collectible nitro orbs, collision detection, camera modes, and responsive HUD telemetry updates.
+         */
+
+        // ==========================================
+        // 1. PROCEDURAL WEB AUDIO ENGINE (No External Files)
+        // ==========================================
+        class SoundEngine {
+            constructor() {
+                this.ctx = null;
+                this.muted = false;
+                this.initialized = false;
+                this.engineOsc = null;
+                this.engineSubOsc = null;
+                this.engineGain = null;
+                this.nitroGain = null;
+                this.brakeGain = null;
+            }
+
+            init() {
+                if (this.initialized) return;
+                try {
+                    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                    this.ctx = new AudioCtx();
+
+                    // Main Engine Oscillator (Sawtooth + Sub Triangle)
+                    this.engineOsc = this.ctx.createOscillator();
+                    this.engineSubOsc = this.ctx.createOscillator();
+                    this.engineOsc.type = 'sawtooth';
+                    this.engineSubOsc.type = 'triangle';
+
+                    // Lowpass filter to warm up the engine growl
+                    const filter = this.ctx.createBiquadFilter();
+                    filter.type = 'lowpass';
+                    filter.frequency.value = 320;
+
+                    this.engineGain = this.ctx.createGain();
+                    this.engineGain.gain.value = 0.0;
+
+                    this.engineOsc.connect(filter);
+                    this.engineSubOsc.connect(filter);
+                    filter.connect(this.engineGain);
+                    this.engineGain.connect(this.ctx.destination);
+
+                    this.engineOsc.start();
+                    this.engineSubOsc.start();
+
+                    // White Noise Buffer for Nitro Whoosh & Tire Screech
+                    const bufferSize = this.ctx.sampleRate * 2;
+                    const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                    const output = noiseBuffer.getChannelData(0);
+                    for (let i = 0; i < bufferSize; i++) {
+                        output[i] = Math.random() * 2 - 1;
+                    }
+
+                    // Nitro Jet Noise
+                    const nitroNoise = this.ctx.createBufferSource();
+                    nitroNoise.buffer = noiseBuffer;
+                    nitroNoise.loop = true;
+                    const nitroFilter = this.ctx.createBiquadFilter();
+                    nitroFilter.type = 'bandpass';
+                    nitroFilter.frequency.value = 950;
+                    this.nitroGain = this.ctx.createGain();
+                    this.nitroGain.gain.value = 0;
+                    nitroNoise.connect(nitroFilter);
+                    nitroFilter.connect(this.nitroGain);
+                    this.nitroGain.connect(this.ctx.destination);
+                    nitroNoise.start();
+
+                    // Tire Brake Screech Noise
+                    const brakeNoise = this.ctx.createBufferSource();
+                    brakeNoise.buffer = noiseBuffer;
+                    brakeNoise.loop = true;
+                    const brakeFilter = this.ctx.createBiquadFilter();
+                    brakeFilter.type = 'highpass';
+                    brakeFilter.frequency.value = 1800;
+                    this.brakeGain = this.ctx.createGain();
+                    this.brakeGain.gain.value = 0;
+                    brakeNoise.connect(brakeFilter);
+                    brakeFilter.connect(this.brakeGain);
+                    this.brakeGain.connect(this.ctx.destination);
+                    brakeNoise.start();
+
+                    this.initialized = true;
+                } catch (e) {
+                    console.warn('Web Audio API unavailable:', e);
+                }
+            }
+
+            update(speedRatio, isNitro, isBraking, isPlaying) {
+                if (!this.initialized || !this.ctx) return;
+                if (this.ctx.state === 'suspended') {
+                    this.ctx.resume();
+                }
+
+                if (this.muted || !isPlaying) {
+                    this.engineGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.08);
+                    this.nitroGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.08);
+                    this.brakeGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.08);
+                    return;
+                }
+
+                // Engine pitch scales with speed + gear shifts
+                const gearSim = (speedRatio * 5) % 1;
+                const baseFreq = 48 + speedRatio * 115 + gearSim * 28 + (isNitro ? 35 : 0);
+                this.engineOsc.frequency.setTargetAtTime(baseFreq, this.ctx.currentTime, 0.05);
+                this.engineSubOsc.frequency.setTargetAtTime(baseFreq * 0.5, this.ctx.currentTime, 0.05);
+                this.engineGain.gain.setTargetAtTime(0.08 + speedRatio * 0.07, this.ctx.currentTime, 0.08);
+
+                // Nitro sound
+                this.nitroGain.gain.setTargetAtTime(isNitro ? 0.14 : 0, this.ctx.currentTime, 0.06);
+
+                // Brake screech when braking at speed
+                const screech = (isBraking && speedRatio > 0.25) ? 0.045 : 0;
+                this.brakeGain.gain.setTargetAtTime(screech, this.ctx.currentTime, 0.05);
+            }
+
+            playPickup() {
+                if (!this.initialized || this.muted || !this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(520, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(1180, this.ctx.currentTime + 0.18);
+                gain.gain.setValueAtTime(0.14, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.2);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.2);
+            }
+
+            playCrash() {
+                if (!this.initialized || this.muted || !this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(140, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(32, this.ctx.currentTime + 0.35);
+                gain.gain.setValueAtTime(0.28, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.38);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.38);
+            }
+
+            playNearMiss(combo = 1) {
+                if (!this.initialized || this.muted || !this.ctx) return;
+                const pitchBoost = Math.min(combo - 1, 6) * 65;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(640 + pitchBoost, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(1280 + pitchBoost, this.ctx.currentTime + 0.14);
+                gain.gain.setValueAtTime(0.13, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.16);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.16);
+            }
+
+            toggleMute() {
+                this.muted = !this.muted;
+                return this.muted;
+            }
+        }
+
+        // ==========================================
+        // 2. GAME STATE & CONFIGURATION
+        // ==========================================
+        const CONFIG = {
+            roadWidth: 18,
+            laneCenters: [-6, -2, 2, 6],
+            maxSpeed: 330,          // KM/H display max
+            normalTopSpeed: 245,    // KM/H without nitro
+            nitroTopSpeed: 335,     // KM/H with nitro
+            accelRate: 88,          // KM/H per sec
+            brakeRate: 195,         // KM/H per sec
+            coastDrag: 34,          // Natural deceleration
+            steerSpeed: 15.5,       // Lateral responsiveness
+            maxSteerAngle: 38,      // Visual steering wheel degrees
+            roadLength: 260
+        };
+
+        const state = {
+            playing: false,
+            paused: false,
+            gameOver: false,
+            speed: 0,               // Current speed in KM/H
+            topSpeedReached: 0,
+            steerInput: 0,          // -1 (left) to +1 (right)
+            currentSteer: 0,        // Smoothed steering value
+            carX: 0,
+            nitro: 100,             // 0 to 100%
+            isNitroActive: false,
+            isBraking: false,
+            isAccelerating: false,
+            health: 100,
+            score: 0,
+            combo: 1,
+            comboTimer: 0,
+            distance: 0,            // in KM
+            highScore: parseInt(localStorage.getItem('apex_velocity_highscore') || '0', 10),
+            cameraMode: 0,          // 0: Chase, 1: Hood, 2: Far Chase
+            carColor: '#ef4444',
+            shakeIntensity: 0
+        };
+
+        const controls = {
+            left: false,
+            right: false,
+            up: false,
+            down: false,
+            nitro: false
+        };
+
+        const sound = new SoundEngine();
+
+        // ==========================================
+        // 3. THREE.JS SCENE, LIGHTING & PROCEDURAL ASSETS
+        // ==========================================
+        const canvas = document.getElementById('game-canvas');
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x090d22);
+        scene.fog = new THREE.FogExp2(0x131633, 0.0072);
+
+        const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 380);
+        camera.position.set(0, 4.2, 8.5);
+
+        // Golden-Hour / Neon Sunset Sky Dome Gradient
+        function createSunsetSkyTexture() {
+            const c = document.createElement('canvas');
+            c.width = 64;
+            c.height = 512;
+            const ctx = c.getContext('2d');
+            const grad = ctx.createLinearGradient(0, 0, 0, 512);
+            grad.addColorStop(0.0, '#050816');
+            grad.addColorStop(0.35, '#17153b');
+            grad.addColorStop(0.62, '#4c1d63');
+            grad.addColorStop(0.82, '#c2415c');
+            grad.addColorStop(1.0, '#fb923c');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 64, 512);
+            return new THREE.CanvasTexture(c);
+        }
+
+        const skyDome = new THREE.Mesh(
+            new THREE.SphereGeometry(310, 32, 24),
+            new THREE.MeshBasicMaterial({ map: createSunsetSkyTexture(), side: THREE.BackSide, fog: false })
+        );
+        scene.add(skyDome);
+
+        // Lighting Setup with Warm Golden Rim + Cool Sky Fill + Specular Highlights
+        const hemiLight = new THREE.HemisphereLight(0xf472b6, 0x0f172a, 0.95);
+        scene.add(hemiLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffb478, 1.35);
+        dirLight.position.set(18, 32, -85);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 1024;
+        dirLight.shadow.mapSize.height = 1024;
+        scene.add(dirLight);
+
+        const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.65);
+        rimLight.position.set(-22, 16, 25);
+        scene.add(rimLight);
+
+        // Procedural Asphalt Road Texture with Subtle Grain, Specular Sheen & 4 Lanes
+        function createRoadTexture() {
+            const c = document.createElement('canvas');
+            c.width = 512;
+            c.height = 512;
+            const ctx = c.getContext('2d');
+
+            // Rich Asphalt Base
+            ctx.fillStyle = '#121829';
+            ctx.fillRect(0, 0, 512, 512);
+
+            // Subtle asphalt aggregate grain & tire wear streaks
+            for (let i = 0; i < 6500; i++) {
+                const x = Math.random() * 512;
+                const y = Math.random() * 512;
+                ctx.fillStyle = Math.random() > 0.5 ? 'rgba(255,255,255,0.035)' : 'rgba(0,0,0,0.11)';
+                ctx.fillRect(x, y, 2, 2);
+            }
+
+            // Tire groove darkening along each lane
+            [72, 184, 328, 440].forEach(laneX => {
+                ctx.fillStyle = 'rgba(4, 7, 15, 0.24)';
+                ctx.fillRect(laneX - 28, 0, 14, 512);
+                ctx.fillRect(laneX + 14, 0, 14, 512);
+            });
+
+            // Outer Neon Edge Lines
+            ctx.fillStyle = '#0ea5e9';
+            ctx.fillRect(14, 0, 8, 512);
+            ctx.fillRect(490, 0, 8, 512);
+
+            // Center Double Amber Line
+            ctx.fillStyle = '#f59e0b';
+            ctx.fillRect(251, 0, 4, 512);
+            ctx.fillRect(257, 0, 4, 512);
+
+            // Dashed Lane Dividers (Left & Right lanes)
+            ctx.fillStyle = 'rgba(241, 245, 249, 0.8)';
+            for (let y = 20; y < 512; y += 64) {
+                ctx.fillRect(134, y, 6, 34);
+                ctx.fillRect(372, y, 6, 34);
+            }
+
+            const tex = new THREE.CanvasTexture(c);
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.RepeatWrapping;
+            tex.repeat.set(1, 18);
+            tex.anisotropy = 8;
+            return tex;
+        }
+
+        const roadTexture = createRoadTexture();
+        const roadGeo = new THREE.PlaneGeometry(CONFIG.roadWidth, CONFIG.roadLength);
+        const roadMat = new THREE.MeshStandardMaterial({
+            map: roadTexture,
+            roughness: 0.45,
+            metalness: 0.28
+        });
+        const roadMesh = new THREE.Mesh(roadGeo, roadMat);
+        roadMesh.rotation.x = -Math.PI / 2;
+        roadMesh.position.z = -CONFIG.roadLength / 2 + 25;
+        roadMesh.receiveShadow = true;
+        scene.add(roadMesh);
+
+        // Synthwave Grid Ground outside the highway
+        const groundGeo = new THREE.PlaneGeometry(460, CONFIG.roadLength);
+        const groundMat = new THREE.MeshBasicMaterial({ color: 0x070a18 });
+        const groundMesh = new THREE.Mesh(groundGeo, groundMat);
+        groundMesh.rotation.x = -Math.PI / 2;
+        groundMesh.position.y = -0.05;
+        groundMesh.position.z = -CONFIG.roadLength / 2 + 25;
+        scene.add(groundMesh);
+
+        // Glowing Guardrails along Road Edges
+        const railGeo = new THREE.BoxGeometry(0.35, 0.65, CONFIG.roadLength);
+        const railMat = new THREE.MeshStandardMaterial({
+            color: 0x0f172a,
+            emissive: 0x0284c7,
+            emissiveIntensity: 0.65,
+            roughness: 0.3,
+            metalness: 0.7
+        });
+        const leftRail = new THREE.Mesh(railGeo, railMat);
+        leftRail.position.set(-CONFIG.roadWidth / 2 - 0.3, 0.32, -CONFIG.roadLength / 2 + 25);
+        scene.add(leftRail);
+
+        const rightRail = new THREE.Mesh(railGeo, railMat);
+        rightRail.position.set(CONFIG.roadWidth / 2 + 0.3, 0.32, -CONFIG.roadLength / 2 + 25);
+        scene.add(rightRail);
+
+        // Roadside Scenery: Light Pillars, Overhead Highway Gantries & City Skyline
+        const sceneryProps = [];
+        const pillarGeo = new THREE.BoxGeometry(0.32, 6.5, 0.32);
+        const pillarMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.6, roughness: 0.35 });
+        const beaconGeo = new THREE.BoxGeometry(0.45, 0.45, 1.2);
+        const beaconMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+
+        const gantrySpanGeo = new THREE.BoxGeometry(CONFIG.roadWidth + 2.4, 0.45, 0.55);
+        const gantrySpanMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.75, roughness: 0.25 });
+        const gantrySignGeo = new THREE.BoxGeometry(5.2, 1.1, 0.22);
+        const gantrySignMat = new THREE.MeshStandardMaterial({
+            color: 0x082f49,
+            emissive: 0x0284c7,
+            emissiveIntensity: 0.45
+        });
+
+        const buildingMat = new THREE.MeshStandardMaterial({
+            color: 0x0c1224,
+            roughness: 0.35,
+            metalness: 0.72
+        });
+
+        for (let i = 0; i < 24; i++) {
+            const zPos = 20 - i * 11;
+
+            // Overhead Highway Gantry Arch every 4 segments
+            if (i % 4 === 1) {
+                const gantry = new THREE.Group();
+                const span = new THREE.Mesh(gantrySpanGeo, gantrySpanMat);
+                span.position.set(0, 7.2, 0);
+                const sign = new THREE.Mesh(gantrySignGeo, gantrySignMat);
+                sign.position.set(-2.5, 7.2, 0.25);
+                const strip = new THREE.Mesh(
+                    new THREE.BoxGeometry(CONFIG.roadWidth + 2.2, 0.12, 0.62),
+                    new THREE.MeshBasicMaterial({ color: 0xf472b6 })
+                );
+                strip.position.set(0, 6.92, 0);
+                gantry.add(span, sign, strip);
+                gantry.position.set(0, 0, zPos);
+                scene.add(gantry);
+                sceneryProps.push(gantry);
+            }
+
+            [-1, 1].forEach(side => {
+                // Highway light post
+                const postGroup = new THREE.Group();
+                const post = new THREE.Mesh(pillarGeo, pillarMat);
+                post.position.y = 3.25;
+                const lamp = new THREE.Mesh(beaconGeo, beaconMat);
+                lamp.position.set(-side * 0.6, 6.4, 0);
+                postGroup.add(post, lamp);
+                postGroup.position.set(side * (CONFIG.roadWidth / 2 + 1.1), 0, zPos);
+                scene.add(postGroup);
+                sceneryProps.push(postGroup);
+
+                // Distant Cyber Skyscraper every 2nd segment
+                if (i % 2 === 0) {
+                    const h = 16 + Math.random() * 32;
+                    const w = 6.5 + Math.random() * 6.5;
+                    const d = 6.5 + Math.random() * 6.5;
+                    const bGeo = new THREE.BoxGeometry(w, h, d);
+                    const bMesh = new THREE.Mesh(bGeo, buildingMat);
+                    bMesh.position.set(side * (CONFIG.roadWidth / 2 + 10.5 + Math.random() * 16), h / 2, zPos);
+
+                    // Neon horizontal trim & rooftop beacon on building
+                    const trimGeo = new THREE.BoxGeometry(w + 0.18, 0.35, d + 0.18);
+                    const trimMat = new THREE.MeshBasicMaterial({
+                        color: Math.random() > 0.45 ? 0x22d3ee : 0xfb7185
+                    });
+                    const trim = new THREE.Mesh(trimGeo, trimMat);
+                    trim.position.y = h * 0.35;
+                    bMesh.add(trim);
+
+                    scene.add(bMesh);
+                    sceneryProps.push(bMesh);
+                }
+            });
+        }
+
+        // Distant Golden-Sunset Horizon Sun with Glow Halo
+        const sunGeo = new THREE.CircleGeometry(38, 36);
+        const sunMat = new THREE.MeshBasicMaterial({ color: 0xff7b54, fog: false });
+        const horizonSun = new THREE.Mesh(sunGeo, sunMat);
+        horizonSun.position.set(0, 22, -255);
+        scene.add(horizonSun);
+
+        const haloGeo = new THREE.RingGeometry(38, 47, 36);
+        const haloMat = new THREE.MeshBasicMaterial({
+            color: 0xf472b6,
+            transparent: true,
+            opacity: 0.32,
+            side: THREE.DoubleSide,
+            fog: false
+        });
+        const sunHalo = new THREE.Mesh(haloGeo, haloMat);
+        sunHalo.position.set(0, 22, -254.5);
+        scene.add(sunHalo);
+
+        // ==========================================
+        // 4. BUILD 3D PLAYER HYPERCAR WITH ARCHES, LIGHTS & MOVING WHEELS
+        // ==========================================
+        const playerCar = new THREE.Group();
+        const carBodyGroup = new THREE.Group(); // Tilts for body roll on turns
+        playerCar.add(carBodyGroup);
+
+        const bodyMaterial = new THREE.MeshStandardMaterial({
+            color: new THREE.Color(state.carColor),
+            metalness: 0.72,
+            roughness: 0.18
+        });
+
+        const carbonMaterial = new THREE.MeshStandardMaterial({
+            color: 0x111827,
+            metalness: 0.75,
+            roughness: 0.28
+        });
+
+        // Main Aerodynamic Lower Chassis
+        const chassisGeo = new THREE.BoxGeometry(2.12, 0.52, 4.45);
+        const chassisMesh = new THREE.Mesh(chassisGeo, bodyMaterial);
+        chassisMesh.position.y = 0.56;
+        chassisMesh.castShadow = true;
+        carBodyGroup.add(chassisMesh);
+
+        // Sculpted Nose & Hood Accent
+        const hoodGeo = new THREE.BoxGeometry(1.76, 0.14, 1.45);
+        const hoodMesh = new THREE.Mesh(hoodGeo, carbonMaterial);
+        hoodMesh.position.set(0, 0.84, -1.35);
+        carBodyGroup.add(hoodMesh);
+
+        // Front Splitter Lip
+        const splitterMesh = new THREE.Mesh(new THREE.BoxGeometry(2.22, 0.08, 0.42), carbonMaterial);
+        splitterMesh.position.set(0, 0.28, -2.22);
+        carBodyGroup.add(splitterMesh);
+
+        // Flared Wheel Arches / Fenders over all 4 wheels
+        const archGeo = new THREE.BoxGeometry(0.44, 0.32, 1.05);
+        [
+            [-1.04, 0.62, -1.35],
+            [1.04,  0.62, -1.35],
+            [-1.04, 0.62, 1.35],
+            [1.04,  0.62, 1.35]
+        ].forEach(([ax, ay, az]) => {
+            const arch = new THREE.Mesh(archGeo, bodyMaterial);
+            arch.position.set(ax, ay, az);
+            carBodyGroup.add(arch);
+        });
+
+        // Sculpted Cabin / Tinted Windshield Canopy
+        const cabinGeo = new THREE.BoxGeometry(1.64, 0.48, 2.1);
+        const cabinMat = new THREE.MeshStandardMaterial({
+            color: 0x090d16,
+            metalness: 0.92,
+            roughness: 0.08
+        });
+        const cabinMesh = new THREE.Mesh(cabinGeo, cabinMat);
+        cabinMesh.position.set(0, 1.02, -0.12);
+        carBodyGroup.add(cabinMesh);
+
+        // Rear Carbon Spoiler Wing & Twin Thruster Nozzles
+        const wingGeo = new THREE.BoxGeometry(2.24, 0.1, 0.48);
+        const wingMesh = new THREE.Mesh(wingGeo, carbonMaterial);
+        wingMesh.position.set(0, 1.16, 1.94);
+        carBodyGroup.add(wingMesh);
+
+        const strutGeo = new THREE.BoxGeometry(0.1, 0.36, 0.26);
+        [-0.68, 0.68].forEach(x => {
+            const strut = new THREE.Mesh(strutGeo, carbonMaterial);
+            strut.position.set(x, 0.96, 1.94);
+            carBodyGroup.add(strut);
+        });
+
+        // Twin Nitro Thruster Housings at Rear
+        const nozzleGeo = new THREE.CylinderGeometry(0.2, 0.24, 0.35, 14);
+        nozzleGeo.rotateX(Math.PI / 2);
+        [-0.52, 0.52].forEach(nx => {
+            const nozzle = new THREE.Mesh(nozzleGeo, carbonMaterial);
+            nozzle.position.set(nx, 0.48, 2.25);
+            carBodyGroup.add(nozzle);
+        });
+
+        // Front Headlights
+        const headLightGeo = new THREE.BoxGeometry(0.48, 0.14, 0.1);
+        const headLightMat = new THREE.MeshBasicMaterial({ color: 0xe0f2fe });
+        [-0.72, 0.72].forEach(x => {
+            const hl = new THREE.Mesh(headLightGeo, headLightMat);
+            hl.position.set(x, 0.62, -2.23);
+            carBodyGroup.add(hl);
+        });
+
+        // Rear Brake Taillight Strip (Brightens vividly when braking!)
+        const tailLightGeo = new THREE.BoxGeometry(1.85, 0.15, 0.1);
+        const tailLightMat = new THREE.MeshBasicMaterial({ color: 0x7f1d1d });
+        const tailLightMesh = new THREE.Mesh(tailLightGeo, tailLightMat);
+        tailLightMesh.position.set(0, 0.68, 2.21);
+        carBodyGroup.add(tailLightMesh);
+
+        // Brake Glow PointLight behind car
+        const brakeGlowLight = new THREE.PointLight(0xff1e42, 0, 7);
+        brakeGlowLight.position.set(0, 0.8, 2.8);
+        carBodyGroup.add(brakeGlowLight);
+
+        // Neon Underglow Plane
+        const underglowGeo = new THREE.PlaneGeometry(2.3, 4.5);
+        const underglowMat = new THREE.MeshBasicMaterial({
+            color: 0x06b6d4,
+            transparent: true,
+            opacity: 0.45,
+            side: THREE.DoubleSide
+        });
+        const underglowMesh = new THREE.Mesh(underglowGeo, underglowMat);
+        underglowMesh.rotation.x = -Math.PI / 2;
+        underglowMesh.position.y = 0.06;
+        playerCar.add(underglowMesh);
+
+        // Twin Nitro Exhaust Flame Cones
+        const flameGeo = new THREE.ConeGeometry(0.22, 1.35, 12);
+        flameGeo.rotateX(Math.PI / 2);
+        const flameMat = new THREE.MeshBasicMaterial({
+            color: 0x00f0ff,
+            transparent: true,
+            opacity: 0.9
+        });
+        const leftFlame = new THREE.Mesh(flameGeo, flameMat);
+        leftFlame.position.set(-0.52, 0.48, 2.85);
+        leftFlame.visible = false;
+
+        const rightFlame = new THREE.Mesh(flameGeo, flameMat);
+        rightFlame.position.set(0.52, 0.48, 2.85);
+        rightFlame.visible = false;
+        carBodyGroup.add(leftFlame, rightFlame);
+
+        // 4 Wheels (Front wheels sit inside pivot groups so they turn left/right!)
+        const wheelPivots = [];
+        const wheelMeshes = [];
+        const tireGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.32, 18);
+        tireGeo.rotateZ(Math.PI / 2);
+        const tireMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.85 });
+        const rimGeo = new THREE.CylinderGeometry(0.22, 0.22, 0.34, 10);
+        rimGeo.rotateZ(Math.PI / 2);
+        const rimMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.8, roughness: 0.2 });
+
+        const wheelPositions = [
+            { x: -1.08, y: 0.38, z: -1.35, isFront: true },
+            { x: 1.08,  y: 0.38, z: -1.35, isFront: true },
+            { x: -1.08, y: 0.38, z: 1.35,  isFront: false },
+            { x: 1.08,  y: 0.38, z: 1.35,  isFront: false }
+        ];
+
+        wheelPositions.forEach(pos => {
+            const pivot = new THREE.Group();
+            pivot.position.set(pos.x, pos.y, pos.z);
+
+            const wheel = new THREE.Group();
+            const tire = new THREE.Mesh(tireGeo, tireMat);
+            const rim = new THREE.Mesh(rimGeo, rimMat);
+            wheel.add(tire, rim);
+            pivot.add(wheel);
+
+            playerCar.add(pivot);
+            wheelMeshes.push(wheel);
+            if (pos.isFront) wheelPivots.push(pivot);
+        });
+
+        playerCar.position.set(0, 0, 0);
+        scene.add(playerCar);
+
+        // ==========================================
+        // 5. TRAFFIC VEHICLES (LANE WEAVING & LIGHTS) & NITRO ORBS
+        // ==========================================
+        const trafficCars = [];
+        const nitroOrbs = [];
+        const trafficColors = [0x3b82f6, 0x10b981, 0xf59e0b, 0x8b5cf6, 0xec4899, 0x64748b];
+
+        function createTrafficCar() {
+            const group = new THREE.Group();
+            const color = trafficColors[Math.floor(Math.random() * trafficColors.length)];
+            const mat = new THREE.MeshStandardMaterial({ color, metalness: 0.58, roughness: 0.28 });
+
+            const body = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.72, 4.2), mat);
+            body.position.y = 0.65;
+            body.castShadow = true;
+            group.add(body);
+
+            const roof = new THREE.Mesh(
+                new THREE.BoxGeometry(1.6, 0.52, 2.2),
+                new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.7, roughness: 0.2 })
+            );
+            roof.position.set(0, 1.22, 0.1);
+            group.add(roof);
+
+            // Red Taillights + Amber Brake/Hazard Accents
+            const tail = new THREE.Mesh(
+                new THREE.BoxGeometry(1.78, 0.18, 0.1),
+                new THREE.MeshBasicMaterial({ color: 0xff2a55 })
+            );
+            tail.position.set(0, 0.72, 2.11);
+            group.add(tail);
+
+            const hazardL = new THREE.Mesh(
+                new THREE.BoxGeometry(0.26, 0.12, 0.12),
+                new THREE.MeshBasicMaterial({ color: 0xfbbf24 })
+            );
+            hazardL.position.set(-0.82, 0.55, 2.11);
+            const hazardR = hazardL.clone();
+            hazardR.position.x = 0.82;
+            group.add(hazardL, hazardR);
+
+            const laneIdx = Math.floor(Math.random() * CONFIG.laneCenters.length);
+            const lane = CONFIG.laneCenters[laneIdx];
+            const canWeave = Math.random() < 0.42;
+            const targetLaneIdx = canWeave
+                ? Math.min(CONFIG.laneCenters.length - 1, Math.max(0, laneIdx + (Math.random() > 0.5 ? 1 : -1)))
+                : laneIdx;
+
+            group.position.set(lane, 0, -160 - Math.random() * 90);
+            group.userData = {
+                speed: 75 + Math.random() * 58, // Traffic speed in KM/H
+                lane: lane,
+                targetX: CONFIG.laneCenters[targetLaneIdx],
+                canWeave: canWeave,
+                nearMissAwarded: false,
+                hazardL,
+                hazardR
+            };
+
+            scene.add(group);
+            trafficCars.push(group);
+        }
+
+        function createNitroOrb() {
+            const orbGroup = new THREE.Group();
+            const core = new THREE.Mesh(
+                new THREE.OctahedronGeometry(0.65, 0),
+                new THREE.MeshBasicMaterial({ color: 0x00f0ff })
+            );
+            const ring = new THREE.Mesh(
+                new THREE.TorusGeometry(0.95, 0.08, 8, 24),
+                new THREE.MeshBasicMaterial({ color: 0x38bdf8 })
+            );
+            ring.rotation.x = Math.PI / 2;
+            orbGroup.add(core, ring);
+
+            const lane = CONFIG.laneCenters[Math.floor(Math.random() * CONFIG.laneCenters.length)];
+            orbGroup.position.set(lane, 1.0, -140 - Math.random() * 120);
+            scene.add(orbGroup);
+            nitroOrbs.push(orbGroup);
+        }
+
+        // Pre-populate initial traffic & orbs
+        function resetEntities() {
+            trafficCars.forEach(c => scene.remove(c));
+            trafficCars.length = 0;
+            nitroOrbs.forEach(o => scene.remove(o));
+            nitroOrbs.length = 0;
+
+            for (let i = 0; i < 6; i++) {
+                createTrafficCar();
+                trafficCars[i].position.z = -55 - i * 36;
+            }
+            for (let i = 0; i < 3; i++) {
+                createNitroOrb();
+                nitroOrbs[i].position.z = -70 - i * 65;
+            }
+        }
+
+        // ==========================================
+        // 6. INPUT LISTENERS (Keyboard & Touch Controls)
+        // ==========================================
+        window.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            if (key === 'a' || e.key === 'ArrowLeft') controls.left = true;
+            if (key === 'd' || e.key === 'ArrowRight') controls.right = true;
+            if (key === 'w' || e.key === 'ArrowUp') controls.up = true;
+            if (key === 's' || e.key === 'ArrowDown') controls.down = true;
+            if (e.key === 'Shift' || e.code === 'Space') controls.nitro = true;
+            if (key === 'c') switchCamera();
+            if (key === 'm') toggleAudio();
+            if (key === 'p' || e.key === 'Escape') togglePause();
+        });
+
+        window.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            if (key === 'a' || e.key === 'ArrowLeft') controls.left = false;
+            if (key === 'd' || e.key === 'ArrowRight') controls.right = false;
+            if (key === 'w' || e.key === 'ArrowUp') controls.up = false;
+            if (key === 's' || e.key === 'ArrowDown') controls.down = false;
+            if (e.key === 'Shift' || e.code === 'Space') controls.nitro = false;
+        });
+
+        // Helper to bind mouse + touch hold on HUD buttons
+        function bindHoldButton(elementId, controlKey) {
+            const el = document.getElementById(elementId);
+            const press = (e) => {
+                e.preventDefault();
+                controls[controlKey] = true;
+                el.classList.add('pressed');
+            };
+            const release = (e) => {
+                e.preventDefault();
+                controls[controlKey] = false;
+                el.classList.remove('pressed');
+            };
+            el.addEventListener('mousedown', press);
+            el.addEventListener('mouseup', release);
+            el.addEventListener('mouseleave', release);
+            el.addEventListener('touchstart', press, { passive: false });
+            el.addEventListener('touchend', release, { passive: false });
+            el.addEventListener('touchcancel', release, { passive: false });
+        }
+
+        bindHoldButton('touch-left', 'left');
+        bindHoldButton('touch-right', 'right');
+        bindHoldButton('touch-gas', 'up');
+        bindHoldButton('touch-brake', 'down');
+        bindHoldButton('touch-nitro', 'nitro');
+
+        // Camera Mode Switcher
+        const camLabels = ['Chase Cam', 'Hood Cam', 'Far Cam'];
+        function switchCamera() {
+            state.cameraMode = (state.cameraMode + 1) % 3;
+            document.getElementById('cam-label').textContent = camLabels[state.cameraMode];
+        }
+        document.getElementById('btn-camera').addEventListener('click', switchCamera);
+
+        // Sound Mute Switcher
+        function toggleAudio() {
+            sound.init();
+            const isMuted = sound.toggleMute();
+            document.getElementById('icon-sound-on').classList.toggle('hidden', isMuted);
+            document.getElementById('icon-sound-off').classList.toggle('hidden', !isMuted);
+        }
+        document.getElementById('btn-sound').addEventListener('click', toggleAudio);
+
+        // Color Swatch Selector on Start Screen
+        document.querySelectorAll('.color-swatch').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.color-swatch').forEach(b => {
+                    b.classList.remove('ring-2', 'ring-offset-2', 'ring-offset-slate-900', 'ring-white', 'scale-110');
+                    b.classList.add('opacity-75');
+                });
+                btn.classList.add('ring-2', 'ring-offset-2', 'ring-offset-slate-900', 'ring-white', 'scale-110');
+                btn.classList.remove('opacity-75');
+                state.carColor = btn.dataset.color;
+                bodyMaterial.color.set(state.carColor);
+            });
+        });
+
+        // ==========================================
+        // 7. GAME LIFECYCLE (Start, Pause, Game Over, Restart)
+        // ==========================================
+        function setPaused(shouldPause) {
+            if (!state.playing || state.gameOver) return;
+            state.paused = shouldPause;
+            const modal = document.getElementById('pause-modal');
+            if (state.paused) {
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+                sound.update(0, false, false, false);
+            } else {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+                lastTime = performance.now();
+            }
+        }
+
+        function togglePause() {
+            setPaused(!state.paused);
+        }
+
+        document.getElementById('btn-pause').addEventListener('click', () => setPaused(true));
+        document.getElementById('btn-resume-game').addEventListener('click', () => setPaused(false));
+        document.getElementById('btn-pause-restart').addEventListener('click', () => {
+            setPaused(false);
+            startGame();
+        });
+
+        function startGame() {
+            sound.init();
+            state.playing = true;
+            state.paused = false;
+            state.gameOver = false;
+            state.speed = 60; // Rolling start
+            state.topSpeedReached = 60;
+            state.steerInput = 0;
+            state.currentSteer = 0;
+            state.carX = 0;
+            state.nitro = 100;
+            state.isNitroActive = false;
+            state.isBraking = false;
+            state.health = 100;
+            state.score = 0;
+            state.combo = 1;
+            state.comboTimer = 0;
+            state.distance = 0;
+            state.shakeIntensity = 0;
+
+            document.getElementById('callout-container').innerHTML = '';
+            playerCar.position.set(0, 0, 0);
+            resetEntities();
+
+            document.getElementById('start-modal').classList.add('hidden');
+            document.getElementById('gameover-modal').classList.add('hidden');
+            document.getElementById('gameover-modal').classList.remove('flex');
+            document.getElementById('pause-modal').classList.add('hidden');
+            document.getElementById('pause-modal').classList.remove('flex');
+            document.getElementById('hud-highscore').textContent = state.highScore.toLocaleString();
+        }
+
+        function triggerGameOver() {
+            state.playing = false;
+            state.gameOver = true;
+            sound.playCrash();
+
+            const finalScoreInt = Math.floor(state.score);
+            if (finalScoreInt > state.highScore) {
+                state.highScore = finalScoreInt;
+                localStorage.setItem('apex_velocity_highscore', state.highScore.toString());
+            }
+
+            document.getElementById('final-score').textContent = finalScoreInt.toLocaleString();
+            document.getElementById('final-distance').textContent = state.distance.toFixed(2) + ' KM';
+            document.getElementById('final-topspeed').textContent = Math.round(state.topSpeedReached) + ' KM/H';
+            document.getElementById('final-highscore').textContent = state.highScore.toLocaleString();
+
+            const modal = document.getElementById('gameover-modal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        document.getElementById('btn-start-game').addEventListener('click', startGame);
+        document.getElementById('btn-restart-game').addEventListener('click', startGame);
+
+        // ==========================================
+        // 8. HUD TELEMETRY UPDATE FUNCTION
+        // ==========================================
+        const elSpeed = document.getElementById('hud-speed');
+        const elSpeedoArc = document.getElementById('speedo-arc');
+        const elGear = document.getElementById('hud-gear');
+        const elBrakeInd = document.getElementById('brake-indicator');
+        const elSteerSvg = document.getElementById('steering-wheel-svg');
+        const elSteerAngle = document.getElementById('hud-steer-angle');
+        const elNitroBar = document.getElementById('nitro-bar');
+        const elNitroPct = document.getElementById('nitro-pct');
+        const elScore = document.getElementById('hud-score');
+        const elCombo = document.getElementById('hud-combo');
+        const elDist = document.getElementById('hud-distance');
+        const elHealthBar = document.getElementById('hud-health-bar');
+        const elHealthText = document.getElementById('hud-health-text');
+        const elNitroVignette = document.getElementById('nitro-vignette');
+
+        function spawnCallout(label, points) {
+            const container = document.getElementById('callout-container');
+            const badge = document.createElement('div');
+            badge.className = 'near-miss-pop hud-panel rounded-full px-4 py-1 border border-amber-400/50 flex items-center gap-2 shadow-lg';
+            badge.innerHTML = `<span class="font-racing text-xs font-black tracking-wider text-amber-300">${label}</span><span class="font-racing text-xs font-bold text-emerald-300">+${points}</span>`;
+            container.appendChild(badge);
+            setTimeout(() => badge.remove(), 1200);
+        }
+
+        function updateHUD() {
+            // 1. Speedometer Digital & SVG Arc (Max arc length = 188.5)
+            const displaySpeed = Math.round(state.speed);
+            elSpeed.textContent = displaySpeed;
+            const speedFraction = Math.min(state.speed / CONFIG.maxSpeed, 1);
+            elSpeedoArc.style.strokeDasharray = `${speedFraction * 188.5} 251.3`;
+
+            // 2. Automatic Transmission Gear Readout
+            let gear = 'N';
+            if (state.speed > 2 && state.speed < 55) gear = '1';
+            else if (state.speed >= 55 && state.speed < 105) gear = '2';
+            else if (state.speed >= 105 && state.speed < 155) gear = '3';
+            else if (state.speed >= 155 && state.speed < 205) gear = '4';
+            else if (state.speed >= 205 && state.speed < 255) gear = '5';
+            else if (state.speed >= 255) gear = '6';
+            elGear.textContent = gear;
+            elGear.style.color = state.isNitroActive ? '#22d3ee' : '#38bdf8';
+
+            // 3. Brake ON / OFF Status Indicator
+            if (state.isBraking) {
+                elBrakeInd.textContent = 'BRAKE: ON';
+                elBrakeInd.className = 'px-2.5 py-0.5 rounded-full font-racing text-[11px] font-bold tracking-wider bg-rose-600 text-white border border-rose-300 shadow-lg shadow-rose-600/50 transition-all duration-75';
+            } else {
+                elBrakeInd.textContent = 'BRAKE: OFF';
+                elBrakeInd.className = 'px-2.5 py-0.5 rounded-full font-racing text-[11px] font-bold tracking-wider bg-slate-800 text-slate-400 border border-slate-700 transition-all duration-75';
+            }
+
+            // 4. Visual Steering Wheel Rotation & Angle Text
+            const wheelDeg = Math.round(state.currentSteer * 95); // Rotate up to +-95 deg visually
+            elSteerSvg.style.transform = `rotate(${wheelDeg}deg)`;
+            if (Math.abs(wheelDeg) < 4) {
+                elSteerAngle.textContent = '0° CENTER';
+            } else if (wheelDeg < 0) {
+                elSteerAngle.textContent = `${Math.abs(wheelDeg)}° LEFT`;
+            } else {
+                elSteerAngle.textContent = `${wheelDeg}° RIGHT`;
+            }
+
+            // 6. Score, Combo, Distance & Armor Health
+            elScore.textContent = Math.floor(state.score).toLocaleString();
+            if (state.combo > 1) {
+                elCombo.textContent = `x${state.combo}`;
+                elCombo.classList.remove('hidden');
+            } else {
+                elCombo.classList.add('hidden');
+            }
+            elDist.textContent = state.distance.toFixed(2);
+            const hp = Math.max(0, Math.round(state.health));
+            elHealthBar.style.width = `${hp}%`;
+            elHealthText.textContent = `${hp}%`;
+        }
+
+        // ==========================================
+        // 9. MAIN SIMULATION & RENDER LOOP
+        // ==========================================
+        let lastTime = performance.now();
+
+        function animate(now) {
+            requestAnimationFrame(animate);
+            const dt = Math.min((now - lastTime) / 1000, 0.05); // Cap delta time at 50ms
+            lastTime = now;
+
+            if (state.playing && !state.paused) {
+                // --- A. Nitro Logic ---
+                if (controls.nitro && state.nitro > 2 && state.speed > 30) {
+                    state.isNitroActive = true;
+                    state.nitro = Math.max(0, state.nitro - 28 * dt);
+                } else {
+                    state.isNitroActive = false;
+                    // Slowly recharge nitro passively
+                    state.nitro = Math.min(100, state.nitro + 7.5 * dt);
+                }
+
+                // --- B. Acceleration & Braking Physics ---
+                state.isBraking = controls.down;
+                state.isAccelerating = controls.up || state.isNitroActive;
+
+                const currentMaxSpeed = state.isNitroActive ? CONFIG.nitroTopSpeed : CONFIG.normalTopSpeed;
+
+                if (state.isBraking) {
+                    state.speed = Math.max(0, state.speed - CONFIG.brakeRate * dt);
+                } else if (state.isAccelerating) {
+                    const boostMult = state.isNitroActive ? 1.85 : 1.0;
+                    if (state.speed < currentMaxSpeed) {
+                        state.speed = Math.min(currentMaxSpeed, state.speed + CONFIG.accelRate * boostMult * dt);
+                    } else {
+                        // Bleed off excess nitro speed smoothly after boost ends
+                        state.speed = Math.max(currentMaxSpeed, state.speed - 45 * dt);
+                    }
+                } else {
+                    // Natural aerodynamic coasting drag
+                    state.speed = Math.max(0, state.speed - CONFIG.coastDrag * dt);
+                }
+
+                if (state.speed > state.topSpeedReached) {
+                    state.topSpeedReached = state.speed;
+                }
+
+                // --- C. Steering & Lateral Movement ---
+                const targetSteer = (controls.right ? 1 : 0) - (controls.left ? 1 : 0);
+                state.currentSteer += (targetSteer - state.currentSteer) * Math.min(1, 12 * dt);
+
+                // Car turns effectively when moving
+                const turnAuthority = Math.min(state.speed / 55, 1.15);
+                state.carX += state.currentSteer * CONFIG.steerSpeed * turnAuthority * dt;
+
+                // Clamp within road guardrails
+                const maxLateral = CONFIG.roadWidth / 2 - 1.35;
+                if (Math.abs(state.carX) > maxLateral) {
+                    state.carX = Math.sign(state.carX) * maxLateral;
+                    state.speed *= 0.985; // Slight wall friction
+                }
+
+                // --- D. Update 3D Player Car Visuals ---
+                // Distance & Score accumulation with active combo
+                if (state.comboTimer > 0) {
+                    state.comboTimer -= dt;
+                    if (state.comboTimer <= 0) {
+                        state.combo = 1;
+                    }
+                }
+                const distDelta = (state.speed / 3600) * dt;
+                state.distance += distDelta;
+                state.score += state.speed * dt * (state.isNitroActive ? 2.5 : 1.0) * state.combo;
+
+                // Update Traffic Cars, Lane Weaving, Near-Misses & Collision Checks
+                for (let i = trafficCars.length - 1; i >= 0; i--) {
+                    const tCar = trafficCars[i];
+                    const tWorldSpeed = tCar.userData.speed * 0.42;
+                    tCar.position.z += (worldSpeed - tWorldSpeed) * dt;
+
+                    // Smooth lane weaving ahead of the player
+                    if (tCar.userData.canWeave && tCar.position.z < -18 && tCar.position.z > -135) {
+                        const dxToTarget = tCar.userData.targetX - tCar.position.x;
+                        tCar.position.x += Math.sign(dxToTarget) * Math.min(Math.abs(dxToTarget), 2.4 * dt);
+                        tCar.rotation.y = -Math.sign(dxToTarget) * 0.06;
+                        const blinkOn = Math.floor(now / 220) % 2 === 0;
+                        tCar.userData.hazardL.visible = blinkOn && dxToTarget < -0.1;
+                        tCar.userData.hazardR.visible = blinkOn && dxToTarget > 0.1;
+                    } else {
+                        tCar.rotation.y *= 0.85;
+                        tCar.userData.hazardL.visible = false;
+                        tCar.userData.hazardR.visible = false;
+                    }
+
+                    // Near-miss detection when passing closely at high speed
+                    const dx = Math.abs(playerCar.position.x - tCar.position.x);
+                    const dz = Math.abs(playerCar.position.z - tCar.position.z);
+                    if (
+                        !tCar.userData.nearMissAwarded &&
+                        tCar.position.z > playerCar.position.z + 1.5 &&
+                        tCar.position.z < playerCar.position.z + 9.0 &&
+                        dx >= 1.85 && dx < 3.45 &&
+                        state.speed > 95
+                    ) {
+                        tCar.userData.nearMissAwarded = true;
+                        state.combo = Math.min(8, state.combo + 1);
+                        state.comboTimer = 4.0;
+                        const bonus = 150 * state.combo;
+                        state.score += bonus;
+                        state.nitro = Math.min(100, state.nitro + 12);
+                        sound.playNearMiss(state.combo);
+                        spawnCallout(`NEAR MISS x${state.combo}`, bonus);
+                    }
+
+                    // Recycle traffic car once passed behind camera
+                    if (tCar.position.z > 22) {
+                        tCar.position.z = -195 - Math.random() * 65;
+                        const laneIdx = Math.floor(Math.random() * CONFIG.laneCenters.length);
+                        tCar.position.x = CONFIG.laneCenters[laneIdx];
+                        tCar.userData.canWeave = Math.random() < 0.42;
+                        const nextIdx = tCar.userData.canWeave
+                            ? Math.min(CONFIG.laneCenters.length - 1, Math.max(0, laneIdx + (Math.random() > 0.5 ? 1 : -1)))
+                            : laneIdx;
+                        tCar.userData.targetX = CONFIG.laneCenters[nextIdx];
+                        tCar.userData.nearMissAwarded = false;
+                    }
+
+                    // AABB Bounding Box Collision Check
+                    if (dx < 1.85 && dz < 3.85) {
+                        // Impact!
+                        sound.playCrash();
+                        state.health -= 28;
+                        state.speed *= 0.45;
+                        state.combo = 1;
+                        state.comboTimer = 0;
+                        state.shakeIntensity = 0.65;
+
+                        // Red damage flash
+                        const dmgEl = document.getElementById('damage-vignette');
+                        dmgEl.style.opacity = '1';
+                        setTimeout(() => { dmgEl.style.opacity = '0'; }, 180);
+
+                        // Push traffic car away so we don't double-collide
+                        tCar.position.z = -210 - Math.random() * 50;
+                        tCar.position.x = CONFIG.laneCenters[Math.floor(Math.random() * CONFIG.laneCenters.length)];
+
+                        if (state.health <= 0) {
+                            state.health = 0;
+                            updateHUD();
+                            triggerGameOver();
+                        }
+                    }
+                }
+
+                // Update Nitro Collectibles
+                for (let i = nitroOrbs.length - 1; i >= 0; i--) {
+                    const orb = nitroOrbs[i];
+                    orb.position.z += worldSpeed * dt;
+                    orb.rotation.y += 2.8 * dt;
+
+                    if (orb.position.z > 18) {
+                        orb.position.z = -180 - Math.random() * 90;
+                        orb.position.x = CONFIG.laneCenters[Math.floor(Math.random() * CONFIG.laneCenters.length)];
+                    }
+
+                    const dx = Math.abs(playerCar.position.x - orb.position.x);
+                    const dz = Math.abs(playerCar.position.z - orb.position.z);
+                    if (dx < 1.75 && dz < 2.6) {
+                        sound.playPickup();
+                        state.nitro = Math.min(100, state.nitro + 35);
+                        state.score += 250;
+                        orb.position.z = -190 - Math.random() * 80;
+                        orb.position.x = CONFIG.laneCenters[Math.floor(Math.random() * CONFIG.laneCenters.length)];
+                    }
+                }
+
+                // --- F. Dynamic Camera Follow & FOV Boost ---
+                const targetFov = state.isNitroActive ? 76 : (60 + (state.speed / CONFIG.maxSpeed) * 8);
+                camera.fov += (targetFov - camera.fov) * 6 * dt;
+                camera.updateProjectionMatrix();
+
+                let camTargetX = state.carX * 0.72;
+                let camTargetY = 3.8;
+                let camTargetZ = 7.8;
+
+                if (state.cameraMode === 1) {
+                    // Hood / Cockpit View
+                    camTargetX = state.carX;
+                    camTargetY = 1.45;
+                    camTargetZ = -0.35;
+                } else if (state.cameraMode === 2) {
+                    // Far Cinematic Chase View
+                    camTargetX = state.carX * 0.6;
+                    camTargetY = 5.8;
+                    camTargetZ = 11.5;
+                }
+
+                // Apply camera shake on crash or high-speed nitro
+                if (state.shakeIntensity > 0) {
+                    state.shakeIntensity = Math.max(0, state.shakeIntensity - 2.2 * dt);
+                }
+                const nitroJitter = state.isNitroActive ? 0.045 : 0;
+                const shakeX = (Math.random() - 0.5) * (state.shakeIntensity + nitroJitter);
+                const shakeY = (Math.random() - 0.5) * (state.shakeIntensity + nitroJitter);
+
+                camera.position.x += (camTargetX - camera.position.x) * 10 * dt + shakeX;
+                camera.position.y += (camTargetY - camera.position.y) * 10 * dt + shakeY;
+                camera.position.z += (camTargetZ - camera.position.z) * 10 * dt;
+
+                if (state.cameraMode === 1) {
+                    camera.lookAt(state.carX * 1.15, 1.2, -35);
+                } else {
+                    camera.lookAt(state.carX * 0.85, 1.1, -18);
+                }
+
+                // Update Audio & HUD
+                sound.update(state.speed / CONFIG.maxSpeed, state.isNitroActive, state.isBraking, true);
+                updateHUD();
+
+            } else {
+                // Attract Mode Camera Orbit around the car on Start/Game Over screens
+                const orbitAngle = now * 0.00045;
+                camera.position.x = Math.sin(orbitAngle) * 7.5;
+                camera.position.z = Math.cos(orbitAngle) * 7.5;
+                camera.position.y = 3.2;
+                camera.lookAt(0, 0.8, 0);
+                sound.update(0, false, false, false);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // Responsive Window Resize Handler
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Initialize High Score Display & Start Render Loop on Window Load
+        window.onload = function () {
+            document.getElementById('hud-highscore').textContent = state.highScore.toLocaleString();
+            resetEntities();
+            requestAnimationFrame(animate);
+        };
+    </script>
+</body>
+</html>
