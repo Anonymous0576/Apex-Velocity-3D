@@ -1,0 +1,26 @@
+{
+  "name": "apex-velocity-3d",
+  "version": "1.0.0",
+  "description": "A high-speed 3D browser racing game with live dashboard telemetry, steering wheel animation, brake ON/OFF indicator, nitro boost, lane-weaving traffic, near-miss combos, and Web Audio sound effects.",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx serve . -l 3000",
+    "dev": "npx live-server --port=3000 --open=index.html",
+    "build": "echo \"Static single-file build ready at index.html\""
+  },
+  "keywords": [
+    "3d-racing",
+    "browser-game",
+    "threejs",
+    "webgl",
+    "arcade-racing",
+    "telemetry",
+    "web-audio"
+  ],
+  "author": "Apex Velocity 3D",
+  "license": "MIT",
+  "devDependencies": {
+    "live-server": "^1.2.2",
+    "serve": "^14.2.3"
+  }
+}
